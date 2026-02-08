@@ -40,7 +40,7 @@
   let routeLine = L.polyline([], { color: 'blue' }).addTo(map);
 
   setInterval(async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = "2024-02-08";
 
     const snap = await db
       .collection("devices")
