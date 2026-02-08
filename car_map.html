@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Car Tracker – Map Only</title>
+  <title>Car Tracker – Red Dot Stops</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -13,18 +13,12 @@
   <style>
     body { margin: 0; font-family: sans-serif; }
     #map { height: 100vh; width: 100vw; }
-
-    /* Floating Control Box */
+    
     .controls {
         position: absolute; top: 10px; right: 10px; z-index: 1000;
-        background: white; padding: 10px 15px; border-radius: 8px;
+        background: white; padding: 10px; border-radius: 8px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         display: flex; flex-direction: column; gap: 5px;
-        min-width: 150px;
-    }
-    .status-text { font-size: 13px; color: #555; font-weight: bold; margin-bottom: 5px;}
-    input[type="date"] {
-        padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
     }
   </style>
 </head>
@@ -34,7 +28,7 @@
 <div id="map"></div>
 
 <div class="controls">
-    <div class="status-text" id="status">Loading...</div>
+    <div id="status" style="font-size:12px; font-weight:bold;">Loading...</div>
     <input type="date" id="datePicker">
 </div>
 
@@ -61,84 +55,85 @@
       iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20]
   });
 
-  const parkIcon = L.icon({
-      iconUrl: 'https://cdn-icons-png.flaticon.com/512/178/178008.png', // Parking "P"
-      iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -32]
-  });
-
   // Layers
   let routeLine = L.polyline([], { color: 'blue', weight: 4, opacity: 0.6 }).addTo(map);
-  let stopLayer = L.layerGroup().addTo(map); // Holds P markers
+  let stopLayer = L.layerGroup().addTo(map); 
   let carMarker = null;
   let unsubscribe = null;
 
   // 🔴 4. STOP DETECTION LOGIC
   function detectStops(points) {
-    stopLayer.clearLayers(); // Clear old parking spots
+    stopLayer.clearLayers(); 
 
     if (points.length < 2) return;
 
     let stopStart = points[0]; 
     let stopEnd = points[0];
 
-    // ⚡ SETTINGS: Adjust sensitivity here
+    // 👇 ADJUST THESE IF NO STOPS APPEAR
     const MIN_STOP_TIME_MS = 2 * 60 * 1000; // 2 Minutes
-    const MAX_DRIFT_METERS = 50; // 50 meters drift allowed
+    const MAX_DRIFT_METERS = 50; // 50 meters drift
 
     for (let i = 1; i < points.length; i++) {
         const p = points[i];
         const dist = map.distance([stopStart.lat, stopStart.lng], [p.lat, p.lng]);
 
         if (dist < MAX_DRIFT_METERS) {
-            // Car is still in the same area
-            stopEnd = p;
+            stopEnd = p; // Still parked
         } else {
-            // Car moved far enough -> Check if previous cluster was a stop
-            processStop(stopStart, stopEnd, MIN_STOP_TIME_MS);
-            
-            // Reset for next cluster
+            // Check if previous cluster was a valid stop
+            const duration = stopEnd.ts - stopStart.ts;
+            if (duration > MIN_STOP_TIME_MS) {
+                drawStopCircle(stopStart, stopEnd, duration);
+            }
+            // Reset
             stopStart = p;
             stopEnd = p;
         }
     }
-    // Check final stop (current position)
-    processStop(stopStart, stopEnd, MIN_STOP_TIME_MS, true);
+    // Check final stop
+    const finalDuration = stopEnd.ts - stopStart.ts;
+    if (finalDuration > MIN_STOP_TIME_MS) {
+        drawStopCircle(stopStart, stopEnd, finalDuration, true);
+    }
   }
 
-  function processStop(start, end, minTime, isCurrent = false) {
-      const duration = end.ts - start.ts;
-      if (duration < minTime) return; // Ignore short stops (traffic lights, etc.)
-
-      // Format Duration
+  function drawStopCircle(start, end, duration, isCurrent = false) {
+      // Calculate readable time
       const mins = Math.floor(duration / 60000);
-      const hours = Math.floor(mins / 60);
-      const m = mins % 60;
-      const timeStr = hours > 0 ? `${hours} hr ${m} min` : `${mins} min`;
-
-      // Format Times
+      const timeStr = mins > 60 ? (mins/60).toFixed(1) + " hrs" : mins + " min";
+      
       const startTime = new Date(start.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      const endTime = new Date(end.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
-      const popupMsg = isCurrent 
-        ? `<b>Currently Parked</b><br>⏳ Since: ${startTime}<br>⏱ Duration: ${timeStr}`
-        : `<b>🅿️ STOPPED</b><br>🕒 ${startTime} - ${endTime}<br>⏱ Duration: ${timeStr}`;
+      console.log(`✅ STOP FOUND: ${startTime} for ${timeStr}`); // DEBUG LOG
 
-      // Add "P" Marker to map
-      L.marker([start.lat, start.lng], {icon: parkIcon})
-       .addTo(stopLayer)
-       .bindPopup(popupMsg);
+      // DRAW RED CIRCLE 🔴
+      const circle = L.circleMarker([start.lat, start.lng], {
+          radius: 8,              // Size of dot
+          fillColor: "#ff0000",   // Red fill
+          color: "#ffffff",       // White border
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 1
+      }).addTo(stopLayer);
+
+      // Add Popup
+      const msg = isCurrent 
+          ? `<b>Currently Here</b><br>Since: ${startTime}<br>Time: ${timeStr}`
+          : `<b>Stopped Here</b><br>Time: ${startTime}<br>Duration: ${timeStr}`;
+      
+      circle.bindPopup(msg);
+      circle.bindTooltip(`${timeStr}`, {permanent: false, direction: 'top'});
   }
 
-  // 🔴 5. LOAD DATA
+  // 🔴 5. LOAD HISTORY
   function loadHistory(dateString) {
       if (unsubscribe) unsubscribe();
-      
-      // Reset Map
       routeLine.setLatLngs([]);
       stopLayer.clearLayers();
       if (carMarker) { map.removeLayer(carMarker); carMarker = null; }
 
-      document.getElementById('status').innerText = `Loading ${dateString}...`;
+      document.getElementById('status').innerText = `Loading...`;
 
       unsubscribe = db.collection("devices")
         .doc("car_001")
@@ -150,58 +145,42 @@
             const rawPoints = [];
             const latlngs = [];
 
-            if (snapshot.empty) {
-                document.getElementById('status').innerText = "No data.";
-                return;
-            }
-
             snapshot.forEach(doc => {
                 const d = doc.data();
                 if (d.lat && d.lng && d.ts) {
                     let ts = d.ts;
-                    if (d.ts.toDate) ts = d.ts.toDate().getTime(); // Handle Firestore Timestamp
-                    
+                    if (d.ts.toDate) ts = d.ts.toDate().getTime();
                     rawPoints.push({ lat: d.lat, lng: d.lng, ts: ts });
                     latlngs.push([d.lat, d.lng]);
                 }
             });
 
-            document.getElementById('status').innerText = `${rawPoints.length} points found`;
+            document.getElementById('status').innerText = `${rawPoints.length} points`;
 
-            // Draw Blue Path
+            // Draw Route
             routeLine.setLatLngs(latlngs);
 
-            // Add Parking Markers
+            // Detect Stops
             detectStops(rawPoints);
 
-            // Add Car Marker (Current Location)
+            // Draw Car
             if (rawPoints.length > 0) {
                 const last = rawPoints[rawPoints.length - 1];
-                const lastPos = [last.lat, last.lng];
-
                 if (!carMarker) {
-                    carMarker = L.marker(lastPos, {icon: carIcon}).addTo(map);
-                    map.setView(lastPos, 14); // Zoom to car
+                    carMarker = L.marker([last.lat, last.lng], {icon: carIcon}).addTo(map);
+                    map.setView([last.lat, last.lng], 14);
                 } else {
-                    carMarker.setLatLng(lastPos);
+                    carMarker.setLatLng([last.lat, last.lng]);
                 }
-                
-                // Add popup to car
-                carMarker.bindPopup(`<b>Current Location</b><br>${new Date(last.ts).toLocaleTimeString()}`);
             }
         });
   }
 
-  // 🔴 6. INIT
+  // Init
   const datePicker = document.getElementById('datePicker');
-  
-  // Set to Today
-  const now = new Date();
-  const today = now.toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
   datePicker.value = today;
-
   loadHistory(today);
-
   datePicker.addEventListener('change', (e) => loadHistory(e.target.value));
 
 </script>
