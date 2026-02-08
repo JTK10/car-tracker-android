@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Car Tracker – Red Dot Stops</title>
+  <title>Car Tracker – Debug Mode</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -18,7 +18,6 @@
         position: absolute; top: 10px; right: 10px; z-index: 1000;
         background: white; padding: 10px; border-radius: 8px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        display: flex; flex-direction: column; gap: 5px;
     }
   </style>
 </head>
@@ -28,12 +27,12 @@
 <div id="map"></div>
 
 <div class="controls">
-    <div id="status" style="font-size:12px; font-weight:bold;">Loading...</div>
+    <div id="status" style="font-size:12px; font-weight:bold; margin-bottom:5px;">Waiting...</div>
     <input type="date" id="datePicker">
 </div>
 
 <script>
-  // 🔴 1. CONFIGURATION
+  // 1. CONFIGURATION
   const firebaseConfig = {
     apiKey: "YAIzaSyBO8FGSZvqr0cFz-bNPWMN6H7ke2htfkNI",
     authDomain: "cartracker-c5bde.firebaseapp.com",
@@ -43,25 +42,19 @@
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
 
-  // 🔴 2. MAP SETUP
   const map = L.map('map').setView([21.1547, 72.7760], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
 
-  // 🔴 3. ICONS
   const carIcon = L.icon({
-      iconUrl: 'https://cdn-icons-png.flaticon.com/512/3202/3202926.png', // Red Car
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/3202/3202926.png',
       iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20]
   });
 
-  // Layers
   let routeLine = L.polyline([], { color: 'blue', weight: 4, opacity: 0.6 }).addTo(map);
   let stopLayer = L.layerGroup().addTo(map); 
   let carMarker = null;
-  let unsubscribe = null;
 
-  // 🔴 4. STOP DETECTION LOGIC
+  // 🔴 DEBUG LOGIC FOR STOPS
   function detectStops(points) {
     stopLayer.clearLayers(); 
 
@@ -70,76 +63,72 @@
     let stopStart = points[0]; 
     let stopEnd = points[0];
 
-    // 👇 ADJUST THESE IF NO STOPS APPEAR
-    const MIN_STOP_TIME_MS = 2 * 60 * 1000; // 2 Minutes
-    const MAX_DRIFT_METERS = 50; // 50 meters drift
+    // 👇 EXTREME SETTINGS FOR TESTING
+    const MIN_STOP_TIME_MS = 60 * 1000; // 1 Minute (Very short to catch everything)
+    const MAX_DRIFT_METERS = 100; // 100 meters (Very loose)
+
+    console.log("--- STARTING ANALYSIS ---");
 
     for (let i = 1; i < points.length; i++) {
         const p = points[i];
+        
+        // Calculate distance in meters
         const dist = map.distance([stopStart.lat, stopStart.lng], [p.lat, p.lng]);
 
         if (dist < MAX_DRIFT_METERS) {
-            stopEnd = p; // Still parked
+            stopEnd = p; // Still in same spot
         } else {
-            // Check if previous cluster was a valid stop
+            // Car moved. Calculate how long it was there.
             const duration = stopEnd.ts - stopStart.ts;
+            const minutes = (duration / 60000).toFixed(1);
+
+            console.log(`Checking stop... Dist moved: ${dist.toFixed(0)}m, Duration: ${minutes} min`);
+
             if (duration > MIN_STOP_TIME_MS) {
+                console.log("✅ VALID STOP FOUND!");
                 drawStopCircle(stopStart, stopEnd, duration);
             }
+
             // Reset
             stopStart = p;
             stopEnd = p;
         }
     }
-    // Check final stop
+
+    // Final Stop Check
     const finalDuration = stopEnd.ts - stopStart.ts;
     if (finalDuration > MIN_STOP_TIME_MS) {
+        console.log("✅ FINAL STOP FOUND!");
         drawStopCircle(stopStart, stopEnd, finalDuration, true);
     }
+    console.log("--- END ANALYSIS ---");
   }
 
   function drawStopCircle(start, end, duration, isCurrent = false) {
-      // Calculate readable time
       const mins = Math.floor(duration / 60000);
-      const timeStr = mins > 60 ? (mins/60).toFixed(1) + " hrs" : mins + " min";
-      
+      const timeStr = mins > 60 ? (mins/60).toFixed(1) + " hr" : mins + " min";
       const startTime = new Date(start.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
-      console.log(`✅ STOP FOUND: ${startTime} for ${timeStr}`); // DEBUG LOG
-
-      // DRAW RED CIRCLE 🔴
-      const circle = L.circleMarker([start.lat, start.lng], {
-          radius: 8,              // Size of dot
-          fillColor: "#ff0000",   // Red fill
-          color: "#ffffff",       // White border
+      L.circleMarker([start.lat, start.lng], {
+          radius: 10,              
+          fillColor: "#ff0000",   
+          color: "#fff",       
           weight: 2,
           opacity: 1,
-          fillOpacity: 1
-      }).addTo(stopLayer);
-
-      // Add Popup
-      const msg = isCurrent 
-          ? `<b>Currently Here</b><br>Since: ${startTime}<br>Time: ${timeStr}`
-          : `<b>Stopped Here</b><br>Time: ${startTime}<br>Duration: ${timeStr}`;
-      
-      circle.bindPopup(msg);
-      circle.bindTooltip(`${timeStr}`, {permanent: false, direction: 'top'});
+          fillOpacity: 0.8
+      }).addTo(stopLayer)
+      .bindPopup(`<b>Stopped: ${timeStr}</b><br>Since: ${startTime}`)
+      .bindTooltip(timeStr, {permanent: true, direction: "top", className: "my-label"});
   }
 
-  // 🔴 5. LOAD HISTORY
   function loadHistory(dateString) {
-      if (unsubscribe) unsubscribe();
       routeLine.setLatLngs([]);
       stopLayer.clearLayers();
       if (carMarker) { map.removeLayer(carMarker); carMarker = null; }
 
       document.getElementById('status').innerText = `Loading...`;
 
-      unsubscribe = db.collection("devices")
-        .doc("car_001")
-        .collection("history")
-        .doc(dateString)
-        .collection("points")
+      db.collection("devices").doc("car_001").collection("history").doc(dateString).collection("points")
         .orderBy("ts")
         .onSnapshot((snapshot) => {
             const rawPoints = [];
@@ -149,21 +138,25 @@
                 const d = doc.data();
                 if (d.lat && d.lng && d.ts) {
                     let ts = d.ts;
-                    if (d.ts.toDate) ts = d.ts.toDate().getTime();
-                    rawPoints.push({ lat: d.lat, lng: d.lng, ts: ts });
-                    latlngs.push([d.lat, d.lng]);
+                    
+                    // 🔴 FIX: Handle Timestamp conversion safely
+                    if (d.ts.toDate) {
+                        ts = d.ts.toDate().getTime();
+                    } else if (typeof d.ts === "string") {
+                        ts = new Date(d.ts).getTime(); // Try parsing string
+                    }
+
+                    if (!isNaN(ts)) {
+                        rawPoints.push({ lat: d.lat, lng: d.lng, ts: ts });
+                        latlngs.push([d.lat, d.lng]);
+                    }
                 }
             });
 
             document.getElementById('status').innerText = `${rawPoints.length} points`;
-
-            // Draw Route
             routeLine.setLatLngs(latlngs);
+            detectStops(rawPoints); // Run logic
 
-            // Detect Stops
-            detectStops(rawPoints);
-
-            // Draw Car
             if (rawPoints.length > 0) {
                 const last = rawPoints[rawPoints.length - 1];
                 if (!carMarker) {
@@ -176,7 +169,6 @@
         });
   }
 
-  // Init
   const datePicker = document.getElementById('datePicker');
   const today = new Date().toISOString().split('T')[0];
   datePicker.value = today;
@@ -184,5 +176,15 @@
   datePicker.addEventListener('change', (e) => loadHistory(e.target.value));
 
 </script>
+
+<style>
+  /* Make the text label readable */
+  .my-label {
+      background: rgba(255,255,255,0.8);
+      border: 1px solid red;
+      color: red;
+      font-weight: bold;
+  }
+</style>
 </body>
 </html>
