@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Car Tracker – Live Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    body { margin: 0; }
+    #map { height: 100vh; width: 100vw; }
+  </style>
+</head>
+
+<body>
+<div id="map"></div>
+
+<script>
+  // 🔴 REPLACE THIS WITH YOUR FIREBASE CONFIG
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  const map = L.map('map').setView([21.1547, 72.7760], 15);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  let marker = null;
+  let routeLine = L.polyline([], { color: 'blue' }).addTo(map);
+
+  setInterval(async () => {
+    const today = new Date().toISOString().split('T')[0];
+
+    const snap = await db
+      .collection("devices")
+      .doc("car_001")
+      .collection("history")
+      .doc(today)
+      .collection("points")
+      .orderBy("ts")
+      .get();
+
+    const path = [];
+
+    snap.forEach(doc => {
+      const d = doc.data();
+      path.push([d.lat, d.lng]);
+    });
+
+    if (path.length === 0) return;
+
+    routeLine.setLatLngs(path);
+    const last = path[path.length - 1];
+
+    if (!marker) {
+      marker = L.marker(last).addTo(map);
+    } else {
+      marker.setLatLng(last);
+    }
+
+    map.setView(last, 16);
+  }, 10000);
+</script>
+
+</body>
+</html>
