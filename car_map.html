@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Car Tracker – Trip Log</title>
+  <title>Car Tracker – Map Only</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -11,33 +11,20 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
   <style>
-    body { margin: 0; font-family: sans-serif; display: flex; }
-    
-    /* Map Area */
-    #map { height: 100vh; flex-grow: 1; }
+    body { margin: 0; font-family: sans-serif; }
+    #map { height: 100vh; width: 100vw; }
 
-    /* Sidebar for Trip Log */
-    .sidebar {
-        width: 300px; height: 100vh; background: #f8f9fa; 
-        border-left: 2px solid #ddd; overflow-y: auto; display: flex; flex-direction: column;
-        box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+    /* Floating Control Box */
+    .controls {
+        position: absolute; top: 10px; right: 10px; z-index: 1000;
+        background: white; padding: 10px 15px; border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        display: flex; flex-direction: column; gap: 5px;
+        min-width: 150px;
     }
-    .header { padding: 15px; background: #343a40; color: white; }
-    .header input { width: 90%; padding: 8px; margin-top: 10px; border-radius: 4px; border: none;}
-    
-    /* Stop List Items */
-    .stop-item {
-        padding: 15px; border-bottom: 1px solid #ddd; cursor: pointer; transition: background 0.2s;
-    }
-    .stop-item:hover { background: #e9ecef; }
-    .stop-time { font-weight: bold; color: #d9534f; font-size: 14px; }
-    .stop-duration { font-size: 12px; color: #666; margin-top: 4px; }
-    
-    /* Floating Status on Map */
-    .map-status {
-        position: absolute; top: 10px; left: 50px; z-index: 1000;
-        background: white; padding: 8px 15px; border-radius: 20px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.3); font-weight: bold; font-size: 13px;
+    .status-text { font-size: 13px; color: #555; font-weight: bold; margin-bottom: 5px;}
+    input[type="date"] {
+        padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
     }
   </style>
 </head>
@@ -45,124 +32,113 @@
 <body>
 
 <div id="map"></div>
-<div class="map-status" id="status">Waiting for data...</div>
 
-<div class="sidebar">
-    <div class="header">
-        <div>📅 <b>Trip History</b></div>
-        <input type="date" id="datePicker">
-    </div>
-    <div id="stopsList">
-        <div style="padding:20px; color:#777; text-align:center;">Select a date to view stops.</div>
-    </div>
+<div class="controls">
+    <div class="status-text" id="status">Loading...</div>
+    <input type="date" id="datePicker">
 </div>
 
 <script>
-  // 🔴 1. CONFIG
+  // 🔴 1. CONFIGURATION
   const firebaseConfig = {
     apiKey: "YAIzaSyBO8FGSZvqr0cFz-bNPWMN6H7ke2htfkNI",
     authDomain: "cartracker-c5bde.firebaseapp.com",
     projectId: "cartracker-c5bde",
   };
-  
+
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
 
+  // 🔴 2. MAP SETUP
   const map = L.map('map').setView([21.1547, 72.7760], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
 
-  // 🔴 2. ICONS & LAYERS
+  // 🔴 3. ICONS
   const carIcon = L.icon({
       iconUrl: 'https://cdn-icons-png.flaticon.com/512/3202/3202926.png', // Red Car
       iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20]
   });
 
-  let routeLine = L.polyline([], { color: '#007bff', weight: 5, opacity: 0.8 }).addTo(map);
-  let stopMarkers = L.layerGroup().addTo(map);
+  const parkIcon = L.icon({
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/178/178008.png', // Parking "P"
+      iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -32]
+  });
+
+  // Layers
+  let routeLine = L.polyline([], { color: 'blue', weight: 4, opacity: 0.6 }).addTo(map);
+  let stopLayer = L.layerGroup().addTo(map); // Holds P markers
   let carMarker = null;
   let unsubscribe = null;
 
-  // 🔴 3. STOP DETECTION LOGIC
+  // 🔴 4. STOP DETECTION LOGIC
   function detectStops(points) {
-    const listDiv = document.getElementById('stopsList');
-    listDiv.innerHTML = ""; // Clear list
-    stopMarkers.clearLayers(); // Clear map circles
+    stopLayer.clearLayers(); // Clear old parking spots
 
     if (points.length < 2) return;
 
     let stopStart = points[0]; 
     let stopEnd = points[0];
-    let stopCount = 0;
 
-    // ⚡ SETTINGS: Adjust these if needed
-    const MIN_STOP_TIME_MS = 2 * 60 * 1000; // 2 Minutes (Lowered for testing)
-    const MAX_DRIFT_METERS = 60; // 60 meters drift allowed
+    // ⚡ SETTINGS: Adjust sensitivity here
+    const MIN_STOP_TIME_MS = 2 * 60 * 1000; // 2 Minutes
+    const MAX_DRIFT_METERS = 50; // 50 meters drift allowed
 
     for (let i = 1; i < points.length; i++) {
         const p = points[i];
         const dist = map.distance([stopStart.lat, stopStart.lng], [p.lat, p.lng]);
 
         if (dist < MAX_DRIFT_METERS) {
-            stopEnd = p; // Still parked
+            // Car is still in the same area
+            stopEnd = p;
         } else {
-            // Car moved. Was the last stop long enough?
-            checkAndAddStop(stopStart, stopEnd, MIN_STOP_TIME_MS, ++stopCount);
+            // Car moved far enough -> Check if previous cluster was a stop
+            processStop(stopStart, stopEnd, MIN_STOP_TIME_MS);
+            
+            // Reset for next cluster
             stopStart = p;
             stopEnd = p;
         }
     }
-
-    // Check final stop (current parking spot)
-    checkAndAddStop(stopStart, stopEnd, MIN_STOP_TIME_MS, ++stopCount, true);
+    // Check final stop (current position)
+    processStop(stopStart, stopEnd, MIN_STOP_TIME_MS, true);
   }
 
-  function checkAndAddStop(start, end, minTime, count, isCurrent = false) {
+  function processStop(start, end, minTime, isCurrent = false) {
       const duration = end.ts - start.ts;
-      if (duration < minTime) return; // Too short, ignore
+      if (duration < minTime) return; // Ignore short stops (traffic lights, etc.)
 
-      // 1. Format Time
+      // Format Duration
       const mins = Math.floor(duration / 60000);
       const hours = Math.floor(mins / 60);
       const m = mins % 60;
-      const timeStr = hours > 0 ? `${hours}h ${m}m` : `${mins} min`;
-      
+      const timeStr = hours > 0 ? `${hours} hr ${m} min` : `${mins} min`;
+
+      // Format Times
       const startTime = new Date(start.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       const endTime = new Date(end.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
-      // 2. Add to Sidebar List
-      const item = document.createElement('div');
-      item.className = 'stop-item';
-      item.innerHTML = `
-          <div class="stop-time">🛑 Stop #${count} (${startTime})</div>
-          <div class="stop-duration">
-             Duration: <b>${timeStr}</b><br>
-             Until: ${isCurrent ? "Now" : endTime}
-          </div>
-      `;
-      // Click to Zoom
-      item.onclick = () => {
-          map.setView([start.lat, start.lng], 16);
-          L.popup().setLatLng([start.lat, start.lng])
-            .setContent(`<b>Stop #${count}</b><br>Spent ${timeStr} here.`)
-            .openOn(map);
-      };
-      document.getElementById('stopsList').appendChild(item);
+      const popupMsg = isCurrent 
+        ? `<b>Currently Parked</b><br>⏳ Since: ${startTime}<br>⏱ Duration: ${timeStr}`
+        : `<b>🅿️ STOPPED</b><br>🕒 ${startTime} - ${endTime}<br>⏱ Duration: ${timeStr}`;
 
-      // 3. Add Circle to Map
-      L.circleMarker([start.lat, start.lng], {
-          color: 'red', fillColor: '#f03', fillOpacity: 0.5, radius: 10
-      }).addTo(stopMarkers).bindPopup(`<b>Stop #${count}</b><br>${timeStr}`);
+      // Add "P" Marker to map
+      L.marker([start.lat, start.lng], {icon: parkIcon})
+       .addTo(stopLayer)
+       .bindPopup(popupMsg);
   }
 
-  // 🔴 4. LOAD HISTORY
+  // 🔴 5. LOAD DATA
   function loadHistory(dateString) {
       if (unsubscribe) unsubscribe();
+      
+      // Reset Map
       routeLine.setLatLngs([]);
-      stopMarkers.clearLayers();
+      stopLayer.clearLayers();
       if (carMarker) { map.removeLayer(carMarker); carMarker = null; }
 
       document.getElementById('status').innerText = `Loading ${dateString}...`;
-      document.getElementById('stopsList').innerHTML = '<div style="padding:20px; text-align:center;">Loading data...</div>';
 
       unsubscribe = db.collection("devices")
         .doc("car_001")
@@ -174,56 +150,58 @@
             const rawPoints = [];
             const latlngs = [];
 
+            if (snapshot.empty) {
+                document.getElementById('status').innerText = "No data.";
+                return;
+            }
+
             snapshot.forEach(doc => {
                 const d = doc.data();
                 if (d.lat && d.lng && d.ts) {
                     let ts = d.ts;
-                    if (d.ts.toDate) ts = d.ts.toDate().getTime();
+                    if (d.ts.toDate) ts = d.ts.toDate().getTime(); // Handle Firestore Timestamp
+                    
                     rawPoints.push({ lat: d.lat, lng: d.lng, ts: ts });
                     latlngs.push([d.lat, d.lng]);
                 }
             });
 
-            if (rawPoints.length === 0) {
-                document.getElementById('status').innerText = "No data.";
-                document.getElementById('stopsList').innerHTML = '<div style="padding:20px; text-align:center;">No driving data found for this date.</div>';
-                return;
-            }
+            document.getElementById('status').innerText = `${rawPoints.length} points found`;
 
-            document.getElementById('status').innerText = `Data Points: ${rawPoints.length}`;
-
-            // Draw Route
+            // Draw Blue Path
             routeLine.setLatLngs(latlngs);
 
-            // Detect Stops
+            // Add Parking Markers
             detectStops(rawPoints);
 
-            // Car Icon
-            const last = rawPoints[rawPoints.length - 1];
-            if (!carMarker) {
-                carMarker = L.marker([last.lat, last.lng], {icon: carIcon}).addTo(map);
-                map.setView([last.lat, last.lng], 14);
-            } else {
-                carMarker.setLatLng([last.lat, last.lng]);
-            }
+            // Add Car Marker (Current Location)
+            if (rawPoints.length > 0) {
+                const last = rawPoints[rawPoints.length - 1];
+                const lastPos = [last.lat, last.lng];
 
-        }, (err) => {
-            console.error(err);
-            alert("Error: " + err.message);
+                if (!carMarker) {
+                    carMarker = L.marker(lastPos, {icon: carIcon}).addTo(map);
+                    map.setView(lastPos, 14); // Zoom to car
+                } else {
+                    carMarker.setLatLng(lastPos);
+                }
+                
+                // Add popup to car
+                carMarker.bindPopup(`<b>Current Location</b><br>${new Date(last.ts).toLocaleTimeString()}`);
+            }
         });
   }
 
-  // 🔴 5. INIT
+  // 🔴 6. INIT
   const datePicker = document.getElementById('datePicker');
+  
+  // Set to Today
   const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const today = `${y}-${m}-${d}`;
-  
+  const today = now.toISOString().split('T')[0];
   datePicker.value = today;
+
   loadHistory(today);
-  
+
   datePicker.addEventListener('change', (e) => loadHistory(e.target.value));
 
 </script>
