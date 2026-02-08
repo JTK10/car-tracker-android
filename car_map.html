@@ -33,7 +33,7 @@
 <div class="controls">
     <div style="font-weight:bold; margin-bottom:5px;">📅 Select Date</div>
     <input type="date" id="datePicker">
-    <div id="status" class="info-panel">Loading...</div>
+    <div id="status" class="info-panel">Waiting...</div>
 </div>
 
 <script>
@@ -73,17 +73,17 @@
     let stopStart = points[0]; 
     let stopEnd = points[0];
 
-    // Thresholds
+    // FIX: Variable name had a space in previous version
     const MIN_STOP_TIME_MS = 5 * 60 * 1000; // 5 Minutes
-    const MAX_ drift_METERS = 50; // If car moves < 50m, consider it stopped
+    const MAX_drift_METERS = 50; // If car moves < 50m, consider it stopped
 
     for (let i = 1; i < points.length; i++) {
         const p = points[i];
         
-        // Calculate distance from the start of the potential stop
+        // Calculate distance
         const dist = map.distance([stopStart.lat, stopStart.lng], [p.lat, p.lng]);
 
-        if (dist < MAX_ drift_METERS) {
+        if (dist < MAX_drift_METERS) {
             // Still in the same spot, extend the stop time
             stopEnd = p;
         } else {
@@ -136,7 +136,9 @@
       markersLayer.clearLayers();
       if (carMarker) { map.removeLayer(carMarker); carMarker = null; }
 
-      document.getElementById('status').innerText = `Loading ${dateString}...`;
+      const statusDiv = document.getElementById('status');
+      statusDiv.innerText = `Loading ${dateString}...`;
+      console.log(`📡 Connecting to Firebase: devices/car_001/history/${dateString}/points`);
 
       unsubscribe = db.collection("devices")
         .doc("car_001")
@@ -149,27 +151,34 @@
             const latlngs = [];
 
             if (snapshot.empty) {
-                document.getElementById('status').innerText = "No driving data.";
+                console.warn("⚠️ No data found in this path!");
+                statusDiv.innerText = "No driving data found.";
                 return;
             }
 
             snapshot.forEach(doc => {
                 const d = doc.data();
+                // Validate data exists
                 if (d.lat && d.lng && d.ts) {
-                    // Ensure ts is a number (milliseconds)
                     let timestamp = d.ts;
-                    if (d.ts.toDate) timestamp = d.ts.toDate().getTime(); // Handle Firestore Timestamp
+                    // Handle Firestore Timestamp object if needed
+                    if (typeof d.ts.toDate === 'function') {
+                        timestamp = d.ts.toDate().getTime();
+                    }
 
                     rawPoints.push({ lat: d.lat, lng: d.lng, ts: timestamp });
                     latlngs.push([d.lat, d.lng]);
                 }
             });
 
+            console.log(`✅ Loaded ${rawPoints.length} points.`);
+            statusDiv.innerText = `${rawPoints.length} points loaded`;
+
             // Update Line
             routeLine.setLatLngs(latlngs);
 
             // Run Parking Analysis
-            markersLayer.clearLayers(); // Clear old parking icons to avoid duplicates
+            markersLayer.clearLayers(); 
             detectStops(rawPoints);
 
             // Update Car Icon
@@ -183,20 +192,28 @@
                 } else {
                     carMarker.setLatLng(lastPos);
                 }
-                
-                document.getElementById('status').innerText = 
-                    `${rawPoints.length} points | Last: ${new Date(last.ts).toLocaleTimeString()}`;
             }
+        }, (error) => {
+            console.error("🔥 Firebase Error:", error);
+            statusDiv.innerText = "Error: " + error.message;
         });
   }
 
   // 5. INIT
   const datePicker = document.getElementById('datePicker');
-  const today = new Date().toISOString().split('T')[0];
+  // Auto-set today's date
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const today = `${year}-${month}-${day}`;
+  
   datePicker.value = today;
   
+  // Start
   loadHistory(today);
   
+  // Change Listener
   datePicker.addEventListener('change', (e) => loadHistory(e.target.value));
 
 </script>
