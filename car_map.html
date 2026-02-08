@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Car Tracker – Live Map</title>
+  <title>Car Tracker – History & Live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -11,102 +11,139 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
   <style>
-    body { margin: 0; }
+    body { margin: 0; font-family: sans-serif; }
     #map { height: 100vh; width: 100vw; }
-    .status-box {
+
+    /* Control Panel Styling */
+    .controls {
         position: absolute; top: 10px; right: 10px; z-index: 1000;
-        background: white; padding: 10px; border-radius: 5px;
-        box-shadow: 0 0 5px rgba(0,0,0,0.3); font-family: sans-serif;
+        background: white; padding: 12px; border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        display: flex; flex-direction: column; gap: 8px;
+        min-width: 200px;
+    }
+    .status-text { font-size: 14px; color: #333; margin-bottom: 5px; font-weight: bold;}
+    input[type="date"] {
+        padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;
     }
   </style>
 </head>
 
 <body>
+
 <div id="map"></div>
-<div class="status-box" id="status">Waiting for data...</div>
+
+<div class="controls">
+    <div class="status-text" id="status">Loading...</div>
+    <input type="date" id="datePicker">
+</div>
 
 <script>
-  // 🔴 1. VERIFY YOUR CONFIG IS CORRECT
+  // 🔴 1. FIREBASE CONFIG
   const firebaseConfig = {
     apiKey: "YAIzaSyBO8FGSZvqr0cFz-bNPWMN6H7ke2htfkNI",
     authDomain: "cartracker-c5bde.firebaseapp.com",
     projectId: "cartracker-c5bde",
   };
 
-  if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
-  }
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
 
-  // Initialize Map
+  // 🔴 2. MAP SETUP
   const map = L.map('map').setView([21.1547, 72.7760], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap'
   }).addTo(map);
 
+  // 🔴 3. CUSTOM CAR ICON
+  const carIcon = L.icon({
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/3097/3097136.png', // Red Car Icon
+      iconSize: [40, 40], // Size in pixels
+      iconAnchor: [20, 20], // Center of the icon
+      popupAnchor: [0, -20] // Where the popup opens
+  });
+
+  // Global variables to manage map state
+  let routeLine = L.polyline([], { color: 'blue', weight: 5, opacity: 0.7 }).addTo(map);
   let marker = null;
-  let routeLine = L.polyline([], { color: 'blue', weight: 4 }).addTo(map);
+  let unsubscribe = null; // To stop listening to old dates
 
-  // 🔴 2. GENERATE DYNAMIC DATE (YYYY-MM-DD)
-  // This ensures we look for TODAY'S data, not an old date.
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const today = `${year}-${month}-${day}`; 
-
-  console.log("Listening for data at path: devices/car_001/history/" + today + "/points");
-  document.getElementById('status').innerText = "Checking: " + today;
-
-  // 🔴 3. REAL-TIME LISTENER (onSnapshot)
-  db.collection("devices")
-    .doc("car_001")
-    .collection("history")
-    .doc(today)
-    .collection("points")
-    .orderBy("ts") // Ensure your data has a 'ts' (timestamp) field
-    .onSnapshot((snapshot) => {
-      
-      const path = [];
-      
-      if (snapshot.empty) {
-        console.log("No data found for today yet.");
-        document.getElementById('status').innerText = "No data for " + today;
-        return;
+  // 🔴 4. MAIN TRACKING FUNCTION
+  function loadHistory(dateString) {
+      // A. Cleanup: Stop listening to previous date
+      if (unsubscribe) {
+          unsubscribe();
+          unsubscribe = null;
       }
 
-      snapshot.forEach(doc => {
-        const d = doc.data();
-        if (d.lat && d.lng) {
-          path.push([d.lat, d.lng]);
-        }
-      });
-
-      console.log(`Received ${path.length} points.`);
-      document.getElementById('status').innerText = `Tracking: ${path.length} points`;
-
-      // Draw the route
-      routeLine.setLatLngs(path);
-
-      // Update Marker position
-      if (path.length > 0) {
-        const lastPosition = path[path.length - 1];
-        
-        if (!marker) {
-          marker = L.marker(lastPosition).addTo(map);
-          map.setView(lastPosition, 16); // Zoom in on first load
-        } else {
-          marker.setLatLng(lastPosition);
-          // Optional: Keep camera centered on car
-          // map.setView(lastPosition); 
-        }
+      // B. Cleanup: Clear map
+      routeLine.setLatLngs([]); // Remove line
+      if (marker) {
+          map.removeLayer(marker); // Remove car
+          marker = null;
       }
 
-    }, (error) => {
-      console.error("Firebase Error:", error);
-      document.getElementById('status').innerText = "Error: " + error.message;
-      alert("Database Error! Check Console (F12)");
-    });
+      document.getElementById('status').innerText = `Loading data for ${dateString}...`;
+      console.log(`Switching to date: ${dateString}`);
+
+      // C. Start Listener for Selected Date
+      unsubscribe = db.collection("devices")
+        .doc("car_001")
+        .collection("history")
+        .doc(dateString)
+        .collection("points")
+        .orderBy("ts")
+        .onSnapshot((snapshot) => {
+            const path = [];
+
+            if (snapshot.empty) {
+                document.getElementById('status').innerText = "No data found for this date.";
+                return;
+            }
+
+            snapshot.forEach(doc => {
+                const d = doc.data();
+                if (d.lat && d.lng) path.push([d.lat, d.lng]);
+            });
+
+            document.getElementById('status').innerText = `Tracking: ${path.length} points`;
+
+            // Draw Route
+            routeLine.setLatLngs(path);
+
+            // Update Car Position (Always at the LAST point)
+            if (path.length > 0) {
+                const lastPos = path[path.length - 1];
+
+                if (!marker) {
+                    marker = L.marker(lastPos, {icon: carIcon}).addTo(map);
+                    marker.bindPopup(`<b>Car Location</b><br>${lastPos[0].toFixed(5)}, ${lastPos[1].toFixed(5)}`);
+                    map.setView(lastPos, 15); // Zoom to car on first load
+                } else {
+                    marker.setLatLng(lastPos);
+                    marker.getPopup().setContent(`<b>Car Location</b><br>${lastPos[0].toFixed(5)}, ${lastPos[1].toFixed(5)}`);
+                }
+            }
+        }, (error) => {
+            console.error(error);
+            document.getElementById('status').innerText = "Error loading data.";
+        });
+  }
+
+  // 🔴 5. INITIALIZE ON LOAD
+  const datePicker = document.getElementById('datePicker');
+  
+  // Set Picker to Today
+  const today = new Date().toISOString().split('T')[0];
+  datePicker.value = today;
+
+  // Load Today automatically
+  loadHistory(today);
+
+  // Listen for Date Changes
+  datePicker.addEventListener('change', (e) => {
+      loadHistory(e.target.value);
+  });
 
 </script>
 
