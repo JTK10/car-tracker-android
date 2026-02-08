@@ -12,12 +12,12 @@
         android:exported="true">
 
         <service
-            android:name=".LocationService"
+            android:name="com.personal.cartracker.LocationService"
             android:foregroundServiceType="location"
             android:exported="false"/>
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.personal.cartracker.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
