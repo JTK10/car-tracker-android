@@ -1,6 +1,5 @@
 plugins {
     id "com.android.application"
-    id "com.google.gms.google-services"
 }
 
 android {
@@ -27,3 +26,6 @@ dependencies {
     implementation "com.google.firebase:firebase-firestore"
     implementation "com.google.android.gms:play-services-location:21.2.0"
 }
+
+/* APPLY GOOGLE SERVICES AT THE END */
+apply plugin: "com.google.gms.google-services"
