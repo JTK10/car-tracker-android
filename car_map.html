@@ -13,64 +13,101 @@
   <style>
     body { margin: 0; }
     #map { height: 100vh; width: 100vw; }
+    .status-box {
+        position: absolute; top: 10px; right: 10px; z-index: 1000;
+        background: white; padding: 10px; border-radius: 5px;
+        box-shadow: 0 0 5px rgba(0,0,0,0.3); font-family: sans-serif;
+    }
   </style>
 </head>
 
 <body>
 <div id="map"></div>
+<div class="status-box" id="status">Waiting for data...</div>
 
 <script>
-  // 🔴 REPLACE THIS WITH YOUR FIREBASE CONFIG
+  // 🔴 1. VERIFY YOUR CONFIG IS CORRECT
   const firebaseConfig = {
     apiKey: "YAIzaSyBO8FGSZvqr0cFz-bNPWMN6H7ke2htfkNI",
     authDomain: "cartracker-c5bde.firebaseapp.com",
     projectId: "cartracker-c5bde",
   };
 
-  firebase.initializeApp(firebaseConfig);
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
   const db = firebase.firestore();
 
-  const map = L.map('map').setView([21.1547, 72.7760], 15);
-
+  // Initialize Map
+  const map = L.map('map').setView([21.1547, 72.7760], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap'
   }).addTo(map);
 
   let marker = null;
-  let routeLine = L.polyline([], { color: 'blue' }).addTo(map);
+  let routeLine = L.polyline([], { color: 'blue', weight: 4 }).addTo(map);
 
-  setInterval(async () => {
-    const today = now.toISOString().split('T')[0];
+  // 🔴 2. GENERATE DYNAMIC DATE (YYYY-MM-DD)
+  // This ensures we look for TODAY'S data, not an old date.
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const today = `${year}-${month}-${day}`; 
 
-    const snap = await db
-      .collection("devices")
-      .doc("car_001")
-      .collection("history")
-      .doc(today)
-      .collection("points")
-      .orderBy("ts")
-      .get();
+  console.log("Listening for data at path: devices/car_001/history/" + today + "/points");
+  document.getElementById('status').innerText = "Checking: " + today;
 
-    const path = [];
+  // 🔴 3. REAL-TIME LISTENER (onSnapshot)
+  db.collection("devices")
+    .doc("car_001")
+    .collection("history")
+    .doc(today)
+    .collection("points")
+    .orderBy("ts") // Ensure your data has a 'ts' (timestamp) field
+    .onSnapshot((snapshot) => {
+      
+      const path = [];
+      
+      if (snapshot.empty) {
+        console.log("No data found for today yet.");
+        document.getElementById('status').innerText = "No data for " + today;
+        return;
+      }
 
-    snap.forEach(doc => {
-      const d = doc.data();
-      path.push([d.lat, d.lng]);
+      snapshot.forEach(doc => {
+        const d = doc.data();
+        if (d.lat && d.lng) {
+          path.push([d.lat, d.lng]);
+        }
+      });
+
+      console.log(`Received ${path.length} points.`);
+      document.getElementById('status').innerText = `Tracking: ${path.length} points`;
+
+      // Draw the route
+      routeLine.setLatLngs(path);
+
+      // Update Marker position
+      if (path.length > 0) {
+        const lastPosition = path[path.length - 1];
+        
+        if (!marker) {
+          marker = L.marker(lastPosition).addTo(map);
+          map.setView(lastPosition, 16); // Zoom in on first load
+        } else {
+          marker.setLatLng(lastPosition);
+          // Optional: Keep camera centered on car
+          // map.setView(lastPosition); 
+        }
+      }
+
+    }, (error) => {
+      console.error("Firebase Error:", error);
+      document.getElementById('status').innerText = "Error: " + error.message;
+      alert("Database Error! Check Console (F12)");
     });
 
-    if (path.length === 0) return;
-
-    routeLine.setLatLngs(path);
-    const last = path[path.length - 1];
-
-    if (!marker) {
-      marker = L.marker(last).addTo(map);
-    } else {
-      marker.setLatLng(last);
-    }
-
-    map.setView(last, 16);
-  }, 10000);
 </script>
 
 </body>
