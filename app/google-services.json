@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "987802986386",
+    "project_id": "cartracker-c5bde",
+    "storage_bucket": "cartracker-c5bde.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:987802986386:android:878e344ed28d19e99d834b",
+        "android_client_info": {
+          "package_name": "com.personal.cartracker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDkwWZmqvetQ3x2pHf6_bfRD-hCBK97vKc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
