@@ -8,8 +8,11 @@ import android.os.Bundle;
 import androidx.activity.ComponentActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 
 public class MainActivity extends ComponentActivity {
+    private ListenerRegistration controlListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -35,10 +38,33 @@ public class MainActivity extends ComponentActivity {
 
         // Permission already granted
         startTrackingService();
+
+        setupControlListener();
     }
 
     private void startTrackingService() {
         startService(new Intent(this, LocationService.class));
+    }
+
+    private void setupControlListener() {
+        controlListener = FirebaseFirestore.getInstance()
+                .collection("devices")
+                .document("car_001")
+                .collection("control")
+                .document("state")
+                .addSnapshotListener((snapshot, e) -> {
+
+                    if (snapshot != null && snapshot.exists()) {
+                        Boolean start = snapshot.getBoolean("startTracking");
+
+                        if (Boolean.TRUE.equals(start)) {
+                            Intent intent = new Intent(this, LocationService.class);
+                            startService(intent);
+
+                            snapshot.getReference().update("startTracking", false);
+                        }
+                    }
+                });
     }
 
     @Override
@@ -53,6 +79,16 @@ public class MainActivity extends ComponentActivity {
                 && grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startTrackingService();
+            setupControlListener();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (controlListener != null) {
+            controlListener.remove();
+            controlListener = null;
+        }
+        super.onDestroy();
     }
 }

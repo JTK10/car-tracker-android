@@ -29,6 +29,7 @@
 <div class="controls">
     <div id="status" style="font-size:12px; font-weight:bold; margin-bottom:5px;">Waiting...</div>
     <input type="date" id="datePicker">
+    <button onclick="startTracking()">Start Tracking</button>
 </div>
 
 <script>
@@ -119,6 +120,14 @@
       }).addTo(stopLayer)
       .bindPopup(`<b>Stopped: ${timeStr}</b><br>Since: ${startTime}`)
       .bindTooltip(timeStr, {permanent: true, direction: "top", className: "my-label"});
+  }
+
+  function startTracking() {
+    db.collection("devices")
+      .doc("car_001")
+      .collection("control")
+      .doc("state")
+      .set({ startTracking: true });
   }
 
   function loadHistory(dateString) {
