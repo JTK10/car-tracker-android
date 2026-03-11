@@ -14,6 +14,9 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        def roadsApiKey = project.findProperty("MAPS_ROADS_API_KEY") ?: ""
+        buildConfigField "String", "MAPS_ROADS_API_KEY", "\"${roadsApiKey}\""
     }
 
     buildTypes {
