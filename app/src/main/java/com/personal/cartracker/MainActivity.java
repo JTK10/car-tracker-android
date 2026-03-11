@@ -10,60 +10,98 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends ComponentActivity {
+    private static final int REQ_PERMISSIONS = 1001;
+
     private ListenerRegistration controlListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // Show simple status UI
         setContentView(R.layout.activity_main);
 
-        // Android 13+ notification permission
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-            ) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                        this,
-                        new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                        1001
-                );
-                return;
+        if (hasAllRequiredPermissions()) {
+            startTrackingService();
+            setupControlListener();
+            return;
+        }
+
+        requestRequiredPermissions();
+    }
+
+    private boolean hasAllRequiredPermissions() {
+        List<String> required = buildRequiredPermissionList();
+        for (String permission : required) {
+            if (ContextCompat.checkSelfPermission(this, permission)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void requestRequiredPermissions() {
+        List<String> missing = new ArrayList<>();
+        for (String permission : buildRequiredPermissionList()) {
+            if (ContextCompat.checkSelfPermission(this, permission)
+                    != PackageManager.PERMISSION_GRANTED) {
+                missing.add(permission);
             }
         }
 
-        // Permission already granted
-        startTrackingService();
+        if (!missing.isEmpty()) {
+            ActivityCompat.requestPermissions(
+                    this,
+                    missing.toArray(new String[0]),
+                    REQ_PERMISSIONS
+            );
+        }
+    }
 
-        setupControlListener();
+    private List<String> buildRequiredPermissionList() {
+        List<String> permissions = new ArrayList<>();
+        permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
+        }
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+
+        return permissions;
     }
 
     private void startTrackingService() {
-        startService(new Intent(this, LocationService.class));
+        Intent intent = new Intent(this, LocationService.class);
+        ContextCompat.startForegroundService(this, intent);
     }
 
     private void setupControlListener() {
         controlListener = FirebaseFirestore.getInstance()
                 .collection("devices")
-                .document("car_001")
+                .document(TrackerConfig.DEVICE_ID)
                 .collection("control")
                 .document("state")
                 .addSnapshotListener((snapshot, e) -> {
-
-                    if (snapshot != null && snapshot.exists()) {
-                        Boolean start = snapshot.getBoolean("startTracking");
-
-                        if (Boolean.TRUE.equals(start)) {
-                            Intent intent = new Intent(this, LocationService.class);
-                            startService(intent);
-
-                            snapshot.getReference().update("startTracking", false);
-                        }
+                    if (snapshot == null || !snapshot.exists()) {
+                        return;
                     }
+
+                    Boolean start = snapshot.getBoolean("startTracking");
+                    if (!Boolean.TRUE.equals(start)) {
+                        return;
+                    }
+
+                    Intent intent = new Intent(this, LocationService.class);
+                    ContextCompat.startForegroundService(this, intent);
+
+                    snapshot.getReference().update("startTracking", false);
                 });
     }
 
@@ -75,9 +113,11 @@ public class MainActivity extends ComponentActivity {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
-        if (requestCode == 1001
-                && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode != REQ_PERMISSIONS) {
+            return;
+        }
+
+        if (hasAllRequiredPermissions()) {
             startTrackingService();
             setupControlListener();
         }
