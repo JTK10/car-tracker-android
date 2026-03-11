@@ -8,6 +8,10 @@ android {
     namespace "com.personal.cartracker"
     compileSdk 34
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId "com.personal.cartracker"
         minSdk 26
