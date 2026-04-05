@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Car Tracker – Debug Mode</title>
+  <title>Car Tracker – car_002 Live View</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -11,13 +11,34 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
   <style>
-    body { margin: 0; font-family: sans-serif; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
     #map { height: 100vh; width: 100vw; }
     
     .controls {
-        position: absolute; top: 10px; right: 10px; z-index: 1000;
-        background: white; padding: 10px; border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        position: absolute; top: 15px; right: 15px; z-index: 1000;
+        background: white; padding: 15px; border-radius: 12px;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+        max-width: 200px;
+    }
+    .status-pill {
+        font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+        color: #666; margin-bottom: 8px; display: block;
+    }
+    input[type="date"] {
+        width: 100%; padding: 8px; border: 1px solid #ddd;
+        border-radius: 6px; margin-bottom: 10px;
+    }
+    button {
+        width: 100%; background: #007AFF; color: white; border: none;
+        padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer;
+    }
+    button:active { background: #0056b3; }
+    
+    /* Stop Marker Style */
+    .stop-label {
+        background: white; border: 2px solid #ff4444;
+        color: #ff4444; font-weight: bold; padding: 2px 4px;
+        border-radius: 4px; font-size: 10px;
     }
   </style>
 </head>
@@ -27,13 +48,13 @@
 <div id="map"></div>
 
 <div class="controls">
-    <div id="status" style="font-size:12px; font-weight:bold; margin-bottom:5px;">Waiting...</div>
+    <span class="status-pill" id="status">Initializing...</span>
     <input type="date" id="datePicker">
-    <button onclick="startTracking()">Start Tracking</button>
+    <button onclick="startTracking()">Ping Device</button>
 </div>
 
 <script>
-  // 1. CONFIGURATION
+  // 1. FIREBASE CONFIGURATION
   const firebaseConfig = {
     apiKey: "YAIzaSyBO8FGSZvqr0cFz-bNPWMN6H7ke2htfkNI",
     authDomain: "cartracker-c5bde.firebaseapp.com",
@@ -43,102 +64,89 @@
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
 
+  // 2. MAP INITIALIZATION (Surat Default)
   const map = L.map('map').setView([21.1547, 72.7760], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+    attribution: '&copy; OpenStreetMap contributors' 
+  }).addTo(map);
 
   const carIcon = L.icon({
       iconUrl: 'https://cdn-icons-png.flaticon.com/512/3202/3202926.png',
       iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20]
   });
 
-  let routeLine = L.polyline([], { color: 'blue', weight: 4, opacity: 0.6 }).addTo(map);
+  let routeLine = L.polyline([], { color: '#007AFF', weight: 5, opacity: 0.8 }).addTo(map);
   let stopLayer = L.layerGroup().addTo(map); 
   let carMarker = null;
+  let unsubscribe = null; // To clean up Firestore listeners
 
-  // 🔴 DEBUG LOGIC FOR STOPS
+  // 3. STOP DETECTION LOGIC
   function detectStops(points) {
     stopLayer.clearLayers(); 
-
     if (points.length < 2) return;
 
     let stopStart = points[0]; 
     let stopEnd = points[0];
 
-    // 👇 EXTREME SETTINGS FOR TESTING
-    const MIN_STOP_TIME_MS = 60 * 1000; // 1 Minute (Very short to catch everything)
-    const MAX_DRIFT_METERS = 100; // 100 meters (Very loose)
-
-    console.log("--- STARTING ANALYSIS ---");
+    const MIN_STOP_TIME_MS = 2 * 60 * 1000; // 2 Minutes
+    const MAX_DRIFT_METERS = 50; 
 
     for (let i = 1; i < points.length; i++) {
         const p = points[i];
-        
-        // Calculate distance in meters
         const dist = map.distance([stopStart.lat, stopStart.lng], [p.lat, p.lng]);
 
         if (dist < MAX_DRIFT_METERS) {
-            stopEnd = p; // Still in same spot
+            stopEnd = p;
         } else {
-            // Car moved. Calculate how long it was there.
             const duration = stopEnd.ts - stopStart.ts;
-            const minutes = (duration / 60000).toFixed(1);
-
-            console.log(`Checking stop... Dist moved: ${dist.toFixed(0)}m, Duration: ${minutes} min`);
-
             if (duration > MIN_STOP_TIME_MS) {
-                console.log("✅ VALID STOP FOUND!");
                 drawStopCircle(stopStart, stopEnd, duration);
             }
-
-            // Reset
             stopStart = p;
             stopEnd = p;
         }
     }
-
-    // Final Stop Check
-    const finalDuration = stopEnd.ts - stopStart.ts;
-    if (finalDuration > MIN_STOP_TIME_MS) {
-        console.log("✅ FINAL STOP FOUND!");
-        drawStopCircle(stopStart, stopEnd, finalDuration, true);
-    }
-    console.log("--- END ANALYSIS ---");
   }
 
-  function drawStopCircle(start, end, duration, isCurrent = false) {
+  function drawStopCircle(start, end, duration) {
       const mins = Math.floor(duration / 60000);
       const timeStr = mins > 60 ? (mins/60).toFixed(1) + " hr" : mins + " min";
       const startTime = new Date(start.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
       L.circleMarker([start.lat, start.lng], {
-          radius: 10,              
-          fillColor: "#ff0000",   
-          color: "#fff",       
-          weight: 2,
-          opacity: 1,
-          fillOpacity: 0.8
+          radius: 8, fillColor: "#ff4444", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9
       }).addTo(stopLayer)
-      .bindPopup(`<b>Stopped: ${timeStr}</b><br>Since: ${startTime}`)
-      .bindTooltip(timeStr, {permanent: true, direction: "top", className: "my-label"});
+      .bindPopup(`<b>Stopped: ${timeStr}</b><br>Arrived: ${startTime}`)
+      .bindTooltip(timeStr, {permanent: false, direction: "top", className: "stop-label"});
   }
 
+  // 4. REMOTE CONTROL
   function startTracking() {
-    db.collection("devices")
-      .doc("car_001")
-      .collection("control")
-      .doc("state")
-      .set({ startTracking: true });
+    db.collection("devices").doc("car_002").collection("control").doc("state")
+      .set({ startTracking: true, lastPing: firebase.firestore.FieldValue.serverTimestamp() });
+    alert("Tracking command sent to car_002");
   }
 
-  function loadHistory(dateString) {
+  // 5. DATA LOADING
+  function loadDataForDate(dateString) {
+      // Cleanup previous listener
+      if (unsubscribe) unsubscribe();
+      
       routeLine.setLatLngs([]);
       stopLayer.clearLayers();
       if (carMarker) { map.removeLayer(carMarker); carMarker = null; }
 
-      document.getElementById('status').innerText = `Loading...`;
+      document.getElementById('status').innerText = `Searching...`;
 
-      db.collection("devices").doc("car_001").collection("history").doc(dateString).collection("points")
-        .orderBy("ts")
+      // Define time range for the selected date
+      const startOfDay = new Date(dateString + "T00:00:00");
+      const endOfDay = new Date(dateString + "T23:59:59");
+
+      // QUERY UPDATED: Target 'car_002' and 'metrics' collection
+      unsubscribe = db.collection("devices").doc("car_002").collection("metrics")
+        .where("ts", ">=", startOfDay)
+        .where("ts", "<=", endOfDay)
+        .orderBy("ts", "asc")
         .onSnapshot((snapshot) => {
             const rawPoints = [];
             const latlngs = [];
@@ -146,14 +154,7 @@
             snapshot.forEach(doc => {
                 const d = doc.data();
                 if (d.lat && d.lng && d.ts) {
-                    let ts = d.ts;
-                    
-                    // 🔴 FIX: Handle Timestamp conversion safely
-                    if (d.ts.toDate) {
-                        ts = d.ts.toDate().getTime();
-                    } else if (typeof d.ts === "string") {
-                        ts = new Date(d.ts).getTime(); // Try parsing string
-                    }
+                    let ts = d.ts.toDate ? d.ts.toDate().getTime() : new Date(d.ts).getTime();
 
                     if (!isNaN(ts)) {
                         rawPoints.push({ lat: d.lat, lng: d.lng, ts: ts });
@@ -162,38 +163,37 @@
                 }
             });
 
-            document.getElementById('status').innerText = `${rawPoints.length} points`;
+            document.getElementById('status').innerText = `${rawPoints.length} points (car_002)`;
             routeLine.setLatLngs(latlngs);
-            detectStops(rawPoints); // Run logic
+            detectStops(rawPoints);
 
             if (rawPoints.length > 0) {
                 const last = rawPoints[rawPoints.length - 1];
                 if (!carMarker) {
                     carMarker = L.marker([last.lat, last.lng], {icon: carIcon}).addTo(map);
-                    map.setView([last.lat, last.lng], 14);
+                    map.setView([last.lat, last.lng], 15);
                 } else {
                     carMarker.setLatLng([last.lat, last.lng]);
                 }
+            } else {
+                document.getElementById('status').innerText = "No data for this date";
             }
+        }, (error) => {
+            console.error("Firestore Error:", error);
+            document.getElementById('status').innerText = "Error loading data";
         });
   }
 
+  // 6. EVENT LISTENERS
   const datePicker = document.getElementById('datePicker');
   const today = new Date().toISOString().split('T')[0];
   datePicker.value = today;
-  loadHistory(today);
-  datePicker.addEventListener('change', (e) => loadHistory(e.target.value));
+  
+  // Initial Load
+  loadDataForDate(today);
+
+  datePicker.addEventListener('change', (e) => loadDataForDate(e.target.value));
 
 </script>
-
-<style>
-  /* Make the text label readable */
-  .my-label {
-      background: rgba(255,255,255,0.8);
-      border: 1px solid red;
-      color: red;
-      font-weight: bold;
-  }
-</style>
 </body>
 </html>
